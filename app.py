@@ -7,18 +7,18 @@ import plotly.express as px
 import plotly.graph_objects as go
 import yfinance as yf
 
-# ----------------------------
-# Page config
-# ----------------------------
+# ---------------------------------------------------
+# Page Configuration
+# ---------------------------------------------------
 st.set_page_config(
-    page_title="Stock Sentiment Dashboard",
+    page_title="AI-Based Stock Sentiment Dashboard",
     page_icon="📈",
     layout="wide"
 )
 
-# ----------------------------
-# Custom CSS
-# ----------------------------
+# ---------------------------------------------------
+# Custom CSS Styling
+# ---------------------------------------------------
 st.markdown("""
 <style>
     .block-container {
@@ -136,37 +136,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------------------
-# Secrets / API key
-# ----------------------------
-API_KEY = st.secrets["NEWS_API_KEY"]
+# ---------------------------------------------------
+# API Key from Streamlit Secrets
+# ---------------------------------------------------
+API_KEY = st.secrets.get("NEWS_API_KEY", "")
 
-# ----------------------------
-# Company names
-# ----------------------------
-company_names = {
-    "AAPL": "Apple",
-    "TSLA": "Tesla",
-    "NVDA": "NVIDIA",
-    "MSFT": "Microsoft",
-    "AMZN": "Amazon",
-    "META": "Meta",
-    "GOOGL": "Google",
-    "NFLX": "Netflix",
-    "AMD": "AMD",
-    "INTC": "Intel",
-    "IBM": "IBM",
-    "ORCL": "Oracle"
-}
-
-# ----------------------------
-# Sentiment setup
-# ----------------------------
+# ---------------------------------------------------
+# Sentiment Analyzer
+# ---------------------------------------------------
 analyzer = SentimentIntensityAnalyzer()
 
-# ----------------------------
-# Helper functions
-# ----------------------------
+# ---------------------------------------------------
+# Helper Functions
+# ---------------------------------------------------
 def get_sentiment_label(score: float) -> str:
     if score >= 0.05:
         return "Positive"
@@ -195,13 +177,26 @@ def get_tag_html(label: str) -> str:
         return '<span class="tag-negative">Negative</span>'
     return '<span class="tag-neutral">Neutral</span>'
 
-def fetch_news(ticker: str):
+def get_company_name(ticker: str) -> str:
+    """Try to get company short name from Yahoo Finance."""
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        return info.get("shortName") or info.get("longName") or ticker
+    except Exception:
+        return ticker
+
+def fetch_news(query: str):
+    """Fetch recent stock-related news from NewsAPI."""
+    if not API_KEY:
+        return None, "Missing NEWS_API_KEY. Please add it in Streamlit secrets."
+
     today = datetime.utcnow().date()
     from_date = today - timedelta(days=7)
 
     url = "https://newsapi.org/v2/everything"
     params = {
-        "q": ticker,
+        "q": query,
         "from": from_date.isoformat(),
         "to": today.isoformat(),
         "language": "en",
@@ -222,29 +217,25 @@ def fetch_news(ticker: str):
     except Exception as e:
         return None, f"Request failed: {e}"
 
-def get_stock_price(ticker: str):
+def get_stock_price_and_name(ticker: str):
+    """Fetch latest stock price and company name using yfinance."""
     try:
         stock = yf.Ticker(ticker)
-
-        # Try fast info first
-        fast_info = stock.fast_info
-        if fast_info and "lastPrice" in fast_info and fast_info["lastPrice"] is not None:
-            return round(float(fast_info["lastPrice"]), 2)
-
-        # Fallback to recent history
         hist = stock.history(period="5d")
-        if not hist.empty and "Close" in hist.columns:
-            latest_close = hist["Close"].dropna().iloc[-1]
-            return round(float(latest_close), 2)
 
-        return None
-    except Exception as e:
-        st.warning(f"Could not fetch stock price for {ticker}.")
-        return None
+        if hist.empty or "Close" not in hist.columns:
+            return None, None
 
-# ----------------------------
+        latest_close = hist["Close"].dropna().iloc[-1]
+        company_name = get_company_name(ticker)
+
+        return round(float(latest_close), 2), company_name
+    except Exception:
+        return None, None
+
+# ---------------------------------------------------
 # Sidebar
-# ----------------------------
+# ---------------------------------------------------
 st.sidebar.title("📘 About")
 st.sidebar.write(
     """
@@ -256,11 +247,12 @@ st.sidebar.write(
     - displays charts and article insights
     """
 )
-st.sidebar.markdown("**Try these tickers:** AAPL, TSLA, MSFT, AMZN, NVDA")
+st.sidebar.markdown("**Use ticker symbols like:** AAPL, TSLA, MSFT, AMZN, NVDA")
+st.sidebar.markdown("**Example:** Tesla = TSLA")
 
-# ----------------------------
-# Hero section
-# ----------------------------
+# ---------------------------------------------------
+# Hero Section
+# ---------------------------------------------------
 st.markdown("""
 <div class="hero">
     <h1>📈 AI-Based Stock Sentiment Dashboard</h1>
@@ -268,16 +260,16 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ----------------------------
-# Input form
-# ----------------------------
+# ---------------------------------------------------
+# Input Form
+# ---------------------------------------------------
 with st.form("ticker_form"):
     col_input, col_button = st.columns([4, 1])
 
     with col_input:
         ticker = st.text_input(
             "Enter stock ticker",
-            placeholder="Example: AAPL"
+            placeholder="Example: AAPL, TSLA, MSFT"
         ).strip().upper()
 
     with col_button:
@@ -285,22 +277,29 @@ with st.form("ticker_form"):
         st.write("")
         analyze = st.form_submit_button("Analyze")
 
-company = company_names.get(ticker, ticker)
-
 st.caption("This tool is for educational use only and does not provide financial advice.")
 
-# ----------------------------
-# Main logic
-# ----------------------------
+# ---------------------------------------------------
+# Main App Logic
+# ---------------------------------------------------
 if analyze:
     if not ticker:
         st.warning("Please enter a stock ticker.")
-    elif not ticker.isalpha() or len(ticker) > 5:
-        st.warning("Please enter a valid ticker using only letters, up to 5 characters.")
+    elif not ticker.isalnum() or len(ticker) > 10:
+        st.warning("Please enter a valid stock ticker.")
     else:
         with st.spinner("Fetching news, stock price, and analyzing sentiment..."):
-            articles, error = fetch_news(ticker)
-            stock_price = get_stock_price(ticker)
+            stock_price, company = get_stock_price_and_name(ticker)
+
+            if stock_price is None:
+                st.error(
+                    f"Could not find stock data for '{ticker}'. "
+                    "Please enter a valid ticker symbol such as TSLA, AAPL, MSFT, or NVDA."
+                )
+                st.stop()
+
+            search_query = f"{ticker} OR {company}"
+            articles, error = fetch_news(search_query)
 
         if error:
             st.error(error)
@@ -345,9 +344,7 @@ if analyze:
                 neutral_count = (df["Sentiment"] == "Neutral").sum()
                 negative_count = (df["Sentiment"] == "Negative").sum()
 
-                # ----------------------------
-                # Summary banner
-                # ----------------------------
+                # Summary Banner
                 if overall_label == "Bullish":
                     st.success(f"**Overall Sentiment for {company} ({ticker}): {overall_label}** — {overall_message}")
                 elif overall_label == "Bearish":
@@ -355,26 +352,19 @@ if analyze:
                 else:
                     st.info(f"**Overall Sentiment for {company} ({ticker}): {overall_label}** — {overall_message}")
 
-                # ----------------------------
-                # Top summary cards
-                # ----------------------------
+                # Top Metrics
                 top1, top2, top3 = st.columns(3)
 
                 with top1:
                     st.metric("Company", f"{company} ({ticker})")
 
                 with top2:
-                    if stock_price is not None:
-                        st.metric("Latest Price", f"${stock_price}")
-                    else:
-                        st.metric("Latest Price", "N/A")
+                    st.metric("Latest Price", f"${stock_price}")
 
                 with top3:
                     st.metric("Market Sentiment", overall_label)
 
-                # ----------------------------
-                # Summary cards
-                # ----------------------------
+                # Summary Cards
                 c1, c2, c3, c4 = st.columns(4)
 
                 with c1:
@@ -411,9 +401,7 @@ if analyze:
 
                 st.markdown("")
 
-                # ----------------------------
-                # Beginner explanation
-                # ----------------------------
+                # Explanation
                 st.markdown("### 📖 What This Means")
 
                 if overall_label == "Bullish":
@@ -431,9 +419,7 @@ if analyze:
                         "The recent news sentiment is mixed. Some articles are positive while others are negative."
                     )
 
-                # ----------------------------
-                # Gauge chart
-                # ----------------------------
+                # Gauge Chart
                 fig_gauge = go.Figure(go.Indicator(
                     mode="gauge+number",
                     value=overall_score,
@@ -451,21 +437,14 @@ if analyze:
                 fig_gauge.update_layout(height=350)
                 st.plotly_chart(fig_gauge, width="stretch")
 
-                # ----------------------------
                 # Tabs
-                # ----------------------------
                 tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Charts", "Articles", "Download"])
 
                 with tab1:
                     st.markdown('<div class="section-title">Overview</div>', unsafe_allow_html=True)
                     st.write(f"**Company:** {company}")
                     st.write(f"**Ticker:** {ticker}")
-
-                    if stock_price is not None:
-                        st.write(f"**Latest Stock Price:** ${stock_price}")
-                    else:
-                        st.write("**Latest Stock Price:** Not available")
-
+                    st.write(f"**Latest Stock Price:** ${stock_price}")
                     st.write(f"**Articles analyzed:** {len(df)}")
                     st.write(f"**Market mood:** {overall_label}")
                     st.write(f"**Explanation:** {overall_message}")
